@@ -4,6 +4,7 @@ using ErsatzTV.Core.Domain;
 using ErsatzTV.Core.Interfaces.Jellyfin;
 using ErsatzTV.Core.Interfaces.Metadata;
 using ErsatzTV.Core.Jellyfin;
+using ErsatzTV.Core.MediaSegments;
 using ErsatzTV.Core.Metadata;
 using ErsatzTV.Infrastructure.Jellyfin.Models;
 using Microsoft.Extensions.Caching.Memory;
@@ -227,6 +228,26 @@ public class JellyfinApiClient : IJellyfinApiClient
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error getting jellyfin playback info");
+            return BaseError.New(ex.Message);
+        }
+    }
+
+    public async Task<Either<BaseError, List<MediaSegment>>> GetMediaSegments(
+        string address,
+        string authorizationHeader,
+        string itemId)
+    {
+        try
+        {
+            IJellyfinApi service = ServiceForAddress(address);
+            JellyfinMediaSegmentsResponse response = await service.GetMediaSegments(authorizationHeader, itemId);
+            return Optional(response?.Items).Flatten()
+                .Map(s => JellyfinMediaSegmentMapper.FromTicks(s.Type, s.StartTicks, s.EndTicks))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting jellyfin media segments for item {ItemId}", itemId);
             return BaseError.New(ex.Message);
         }
     }

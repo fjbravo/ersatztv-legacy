@@ -1,5 +1,6 @@
 ﻿using ErsatzTV.Core.Domain;
 using ErsatzTV.Core.Jellyfin;
+using ErsatzTV.Core.MediaSegments;
 
 namespace ErsatzTV.Core.Interfaces.Jellyfin;
 
@@ -72,4 +73,8 @@ public interface IJellyfinApiClient
         string seasonId,
         string episodeId);
 
+    Task<Either<BaseError, List<MediaSegment>>> GetMediaSegments(
+        string address,
+        string authorizationHeader,
+        string itemId);
 }

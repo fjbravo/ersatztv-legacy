@@ -175,6 +175,12 @@ public interface IJellyfinApi
         string authorizationHeader,
         string itemId);
 
+    [Get("/MediaSegments/{itemId}")]
+    Task<JellyfinMediaSegmentsResponse> GetMediaSegments(
+        [Header("Authorization")]
+        string authorizationHeader,
+        string itemId);
+
     [Get("/Search/Hints")]
     Task<JellyfinSearchHintsResponse> SearchHints(
         [Header("Authorization")]
