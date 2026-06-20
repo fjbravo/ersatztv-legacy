@@ -1,13 +1,17 @@
 ﻿using System.Threading.Channels;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using EFCore.BulkExtensions;
 using ErsatzTV.Application.Channels;
 using ErsatzTV.Application.Subtitles;
 using ErsatzTV.Core;
 using ErsatzTV.Core.Domain;
 using ErsatzTV.Core.Domain.Scheduling;
+using ErsatzTV.Core.Extensions;
 using ErsatzTV.Core.Interfaces.FFmpeg;
 using ErsatzTV.Core.Interfaces.Locking;
 using ErsatzTV.Core.Interfaces.Scheduling;
+using ErsatzTV.Core.MediaSegments;
 using ErsatzTV.Core.Scheduling;
 using ErsatzTV.Infrastructure.Data;
 using ErsatzTV.Infrastructure.Extensions;
@@ -19,6 +23,12 @@ namespace ErsatzTV.Application.Playouts;
 
 public class BuildPlayoutHandler : IRequestHandler<BuildPlayout, Either<BaseError, Unit>>
 {
+    private static readonly JsonSerializerOptions MediaSegmentJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     private readonly IBlockPlayoutBuilder _blockPlayoutBuilder;
     private readonly IBlockPlayoutFillerBuilder _blockPlayoutFillerBuilder;
     private readonly IDbContextFactory<TvContext> _dbContextFactory;
@@ -153,7 +163,8 @@ public class BuildPlayoutHandler : IRequestHandler<BuildPlayout, Either<BaseErro
             PlayoutReferenceData referenceData = await GetReferenceData(
                 dbContext,
                 playout.Id,
-                playout.ScheduleKind);
+                playout.ScheduleKind,
+                _logger);
             string channelNumber = referenceData.Channel.Number;
             channelName = referenceData.Channel.Name;
             Either<BaseError, PlayoutBuildResult> buildResult = BaseError.New("Unsupported schedule kind");
@@ -440,7 +451,8 @@ public class BuildPlayoutHandler : IRequestHandler<BuildPlayout, Either<BaseErro
     private static async Task<PlayoutReferenceData> GetReferenceData(
         TvContext dbContext,
         int playoutId,
-        PlayoutScheduleKind scheduleKind)
+        PlayoutScheduleKind scheduleKind,
+        ILogger logger)
     {
         Channel channel = await dbContext.Channels
             .AsNoTracking()
@@ -563,6 +575,9 @@ public class BuildPlayoutHandler : IRequestHandler<BuildPlayout, Either<BaseErro
             .Where(h => h.PlayoutId == playoutId)
             .ToListAsync();
 
+        IReadOnlyDictionary<int, IReadOnlyList<PlaybackRange>> mediaSegmentPlaybackRanges =
+            await GetMediaSegmentPlaybackRanges(dbContext, logger);
+
         return new PlayoutReferenceData(
             channel,
             deco,
@@ -571,6 +586,86 @@ public class BuildPlayoutHandler : IRequestHandler<BuildPlayout, Either<BaseErro
             programSchedule,
             programScheduleAlternates,
             playoutHistory,
-            maxPlayoutOffset);
+            maxPlayoutOffset,
+            mediaSegmentPlaybackRanges);
+    }
+
+    private static async Task<IReadOnlyDictionary<int, IReadOnlyList<PlaybackRange>>> GetMediaSegmentPlaybackRanges(
+        TvContext dbContext,
+        ILogger logger)
+    {
+        string configurationJson = await dbContext.ConfigElements
+            .AsNoTracking()
+            .Where(ce => ce.Key == ConfigElementKey.JellyfinMediaSegments.Key)
+            .Select(ce => ce.Value)
+            .FirstOrDefaultAsync();
+
+        if (string.IsNullOrWhiteSpace(configurationJson))
+        {
+            return new Dictionary<int, IReadOnlyList<PlaybackRange>>();
+        }
+
+        MediaSegmentPlayoutConfiguration configuration;
+        try
+        {
+            configuration = JsonSerializer.Deserialize<MediaSegmentPlayoutConfiguration>(
+                configurationJson,
+                MediaSegmentJsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "Failed to parse Jellyfin media segment playout configuration");
+            return new Dictionary<int, IReadOnlyList<PlaybackRange>>();
+        }
+
+        if (configuration is null || configuration.ShowPolicies.Count == 0 || configuration.ItemSegments.Count == 0)
+        {
+            return new Dictionary<int, IReadOnlyList<PlaybackRange>>();
+        }
+
+        Dictionary<int, ShowMediaSegmentSkipPolicy> enabledPolicies = configuration.ShowPolicies
+            .Where(p => p.UseJellyfinMediaSegments && p.ToSkipPolicy().HasAnySkip)
+            .GroupBy(p => p.ShowId)
+            .ToDictionary(g => g.Key, g => g.Last());
+
+        if (enabledPolicies.Count == 0)
+        {
+            return new Dictionary<int, IReadOnlyList<PlaybackRange>>();
+        }
+
+        List<int> mediaItemIds = configuration.ItemSegments
+            .Select(s => s.MediaItemId)
+            .Distinct()
+            .ToList();
+
+        List<Episode> episodes = await dbContext.Episodes
+            .AsNoTracking()
+            .Where(e => mediaItemIds.Contains(e.Id))
+            .Include(e => e.MediaVersions)
+            .Include(e => e.Season)
+            .ToListAsync();
+
+        var result = new Dictionary<int, IReadOnlyList<PlaybackRange>>();
+        foreach (Episode episode in episodes)
+        {
+            if (episode.Season is null || !enabledPolicies.TryGetValue(episode.Season.ShowId, out ShowMediaSegmentSkipPolicy policy))
+            {
+                continue;
+            }
+
+            List<MediaSegment> segments = configuration.ItemSegments
+                .Where(s => s.MediaItemId == episode.Id)
+                .Select(s => s.ToMediaSegment())
+                .ToList();
+
+            IReadOnlyList<PlaybackRange> ranges = MediaSegmentRangePlanner.PlanRanges(
+                episode.GetDurationForPlayout(),
+                segments,
+                policy.ToSkipPolicy());
+
+            result[episode.Id] = ranges;
+        }
+
+        return result;
     }
 }

@@ -2,6 +2,7 @@
 using ErsatzTV.Core.Domain.Filler;
 using ErsatzTV.Core.Extensions;
 using ErsatzTV.Core.Interfaces.Scheduling;
+using ErsatzTV.Core.MediaSegments;
 using Microsoft.Extensions.Logging;
 
 namespace ErsatzTV.Core.Scheduling;
@@ -34,8 +35,12 @@ public class PlayoutModeSchedulerOne(ILogger logger) : PlayoutModeSchedulerBase<
                 break;
             }
 
-            TimeSpan itemDuration = mediaItem.GetDurationForPlayout();
-            List<MediaChapter> itemChapters = ChaptersForMediaItem(mediaItem);
+            TimeSpan mediaDuration = mediaItem.GetDurationForPlayout();
+            IReadOnlyList<PlaybackRange> playbackRanges = PlaybackRangesForMediaItem(mediaItem, playoutBuilderState);
+            TimeSpan itemDuration = DurationForMediaItem(mediaItem, playoutBuilderState);
+            List<MediaChapter> itemChapters = HasMediaSegmentRanges(playbackRanges, mediaDuration)
+                ? []
+                : ChaptersForMediaItem(mediaItem);
 
             var playoutItem = new PlayoutItem
             {
@@ -90,6 +95,7 @@ public class PlayoutModeSchedulerOne(ILogger logger) : PlayoutModeSchedulerBase<
                 itemChapters,
                 warnings,
                 cancellationToken);
+            playoutItems = ApplyMediaSegmentRanges(playoutItems, playoutItem, playbackRanges, mediaDuration);
 
             PlayoutBuilderState nextState = playoutBuilderState with
             {

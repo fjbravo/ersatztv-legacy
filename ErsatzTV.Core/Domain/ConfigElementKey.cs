@@ -50,6 +50,7 @@ public class ConfigElementKey
     public static ConfigElementKey LibraryRefreshInterval => new("scanner.library_refresh_interval");
     public static ConfigElementKey PlayoutDaysToBuild => new("playout.days_to_build");
     public static ConfigElementKey PlayoutSkipMissingItems => new("playout.skip_missing_items");
+    public static ConfigElementKey JellyfinMediaSegments => new("jellyfin.media_segments");
 
     public static ConfigElementKey TroubleshootingBlockPlayoutHistoryPageSize =>
         new("pages.troubleshooting.block_playout_history.page_size");

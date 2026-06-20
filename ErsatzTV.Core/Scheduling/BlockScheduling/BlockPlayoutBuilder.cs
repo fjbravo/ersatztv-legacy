@@ -7,6 +7,7 @@ using ErsatzTV.Core.Extensions;
 using ErsatzTV.Core.Interfaces.Metadata;
 using ErsatzTV.Core.Interfaces.Repositories;
 using ErsatzTV.Core.Interfaces.Scheduling;
+using ErsatzTV.Core.MediaSegments;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Map = LanguageExt.Map;
@@ -210,7 +211,10 @@ public class BlockPlayoutBuilder(
                             mediaItem.Id,
                             PlayoutBuilder.DisplayTitle(mediaItem));
 
-                        TimeSpan itemDuration = mediaItem.GetDurationForPlayout();
+                        IReadOnlyList<PlaybackRange> playbackRanges = MediaSegmentPlayoutPlanner.GetPlaybackRanges(
+                            mediaItem,
+                            referenceData.MediaSegmentPlaybackRanges);
+                        TimeSpan itemDuration = TimeSpan.FromTicks(playbackRanges.Sum(r => r.Duration.Ticks));
 
                         // item will never fit in block
                         var blockDuration = TimeSpan.FromMinutes(effectiveBlock.Block.Minutes);
@@ -310,7 +314,8 @@ public class BlockPlayoutBuilder(
                             break;
                         }
 
-                        result.AddedItems.Add(playoutItem);
+                        List<PlayoutItem> playoutItems = MediaSegmentPlayoutPlanner.ApplyRanges(playoutItem, playbackRanges);
+                        result.AddedItems.AddRange(playoutItems);
 
                         // create a playout history record
                         var nextHistory = new PlayoutHistory
@@ -320,7 +325,7 @@ public class BlockPlayoutBuilder(
                             PlaybackOrder = blockItem.PlaybackOrder,
                             Index = enumerator.State.Index,
                             When = currentTime.UtcDateTime,
-                            Finish = playoutItem.FinishOffset.UtcDateTime,
+                            Finish = playoutItems[^1].FinishOffset.UtcDateTime,
                             Key = historyKey,
                             Details = HistoryDetails.ForMediaItem(mediaItem)
                         };
@@ -329,7 +334,7 @@ public class BlockPlayoutBuilder(
                         result.AddedHistory.Add(nextHistory);
 
                         currentTime += itemDuration;
-                        enumerator.MoveNext(playoutItem.StartOffset);
+                        enumerator.MoveNext(playoutItems[0].StartOffset);
                         done = true;
                     }
                 }

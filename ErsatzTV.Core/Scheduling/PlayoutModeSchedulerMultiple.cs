@@ -2,6 +2,7 @@
 using ErsatzTV.Core.Domain.Filler;
 using ErsatzTV.Core.Extensions;
 using ErsatzTV.Core.Interfaces.Scheduling;
+using ErsatzTV.Core.MediaSegments;
 using LanguageExt.UnsafeValueAccess;
 using Microsoft.Extensions.Logging;
 
@@ -85,8 +86,12 @@ public class PlayoutModeSchedulerMultiple(Map<CollectionKey, int> collectionItem
             // find when we should start this item, based on the current time
             DateTimeOffset itemStartTime = GetStartTimeAfter(nextState, scheduleItem, Option<ILogger>.Some(Logger));
 
-            TimeSpan itemDuration = mediaItem.GetDurationForPlayout();
-            List<MediaChapter> itemChapters = ChaptersForMediaItem(mediaItem);
+            TimeSpan mediaDuration = mediaItem.GetDurationForPlayout();
+            IReadOnlyList<PlaybackRange> playbackRanges = PlaybackRangesForMediaItem(mediaItem, nextState);
+            TimeSpan itemDuration = DurationForMediaItem(mediaItem, nextState);
+            List<MediaChapter> itemChapters = HasMediaSegmentRanges(playbackRanges, mediaDuration)
+                ? []
+                : ChaptersForMediaItem(mediaItem);
 
             var playoutItem = new PlayoutItem
             {
@@ -135,15 +140,16 @@ public class PlayoutModeSchedulerMultiple(Map<CollectionKey, int> collectionItem
 
             // LogScheduledItem(scheduleItem, mediaItem, itemStartTime);
 
-            playoutItems.AddRange(
-                AddFiller(
-                    nextState,
-                    collectionEnumerators,
-                    scheduleItem,
-                    playoutItem,
-                    itemChapters,
-                    warnings,
-                    cancellationToken));
+            List<PlayoutItem> maybePlayoutItems = AddFiller(
+                nextState,
+                collectionEnumerators,
+                scheduleItem,
+                playoutItem,
+                itemChapters,
+                warnings,
+                cancellationToken);
+            maybePlayoutItems = ApplyMediaSegmentRanges(maybePlayoutItems, playoutItem, playbackRanges, mediaDuration);
+            playoutItems.AddRange(maybePlayoutItems);
 
             nextState = nextState with
             {

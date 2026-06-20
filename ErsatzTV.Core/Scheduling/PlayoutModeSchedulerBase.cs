@@ -5,6 +5,7 @@ using ErsatzTV.Core.Domain;
 using ErsatzTV.Core.Domain.Filler;
 using ErsatzTV.Core.Extensions;
 using ErsatzTV.Core.Interfaces.Scheduling;
+using ErsatzTV.Core.MediaSegments;
 using Humanizer;
 using LanguageExt.UnsafeValueAccess;
 using Microsoft.Extensions.Logging;
@@ -273,6 +274,47 @@ public abstract class PlayoutModeSchedulerBase<T>(ILogger logger) : IPlayoutMode
     {
         MediaVersion version = mediaItem.GetHeadVersion();
         return Optional(version.Chapters).Flatten().OrderBy(c => c.StartTime).ToList();
+    }
+
+    protected static TimeSpan DurationForMediaItem(MediaItem mediaItem, PlayoutBuilderState state) =>
+        MediaSegmentPlayoutPlanner.GetEffectiveDuration(mediaItem, state.MediaSegmentPlaybackRanges);
+
+    protected static IReadOnlyList<PlaybackRange> PlaybackRangesForMediaItem(
+        MediaItem mediaItem,
+        PlayoutBuilderState state) =>
+        MediaSegmentPlayoutPlanner.GetPlaybackRanges(mediaItem, state.MediaSegmentPlaybackRanges);
+
+    protected static bool HasMediaSegmentRanges(IReadOnlyList<PlaybackRange> ranges, TimeSpan mediaDuration) =>
+        ranges.Count != 1 || ranges[0].InPoint > TimeSpan.Zero || ranges[0].OutPoint < mediaDuration;
+
+    protected static List<PlayoutItem> ApplyMediaSegmentRanges(
+        List<PlayoutItem> playoutItems,
+        PlayoutItem template,
+        IReadOnlyList<PlaybackRange> ranges,
+        TimeSpan mediaDuration)
+    {
+        if (!HasMediaSegmentRanges(ranges, mediaDuration))
+        {
+            return playoutItems;
+        }
+
+        var result = new List<PlayoutItem>();
+        var replaced = false;
+        foreach (PlayoutItem playoutItem in playoutItems)
+        {
+            if (!replaced && playoutItem.MediaItemId == template.MediaItemId &&
+                playoutItem.Start == template.Start && playoutItem.Finish == template.Finish)
+            {
+                result.AddRange(MediaSegmentPlayoutPlanner.ApplyRanges(playoutItem, ranges));
+                replaced = true;
+            }
+            else
+            {
+                result.Add(playoutItem);
+            }
+        }
+
+        return result;
     }
 
     protected void LogScheduledItem(

@@ -2,6 +2,7 @@
 using ErsatzTV.Core.Domain.Filler;
 using ErsatzTV.Core.Extensions;
 using ErsatzTV.Core.Interfaces.Scheduling;
+using ErsatzTV.Core.MediaSegments;
 using LanguageExt.UnsafeValueAccess;
 using Microsoft.Extensions.Logging;
 
@@ -75,8 +76,12 @@ public class PlayoutModeSchedulerDuration(ILogger logger)
 
             durationUntil = nextState.DurationFinish;
 
-            TimeSpan itemDuration = mediaItem.GetDurationForPlayout();
-            List<MediaChapter> itemChapters = ChaptersForMediaItem(mediaItem);
+            TimeSpan mediaDuration = mediaItem.GetDurationForPlayout();
+            IReadOnlyList<PlaybackRange> playbackRanges = PlaybackRangesForMediaItem(mediaItem, nextState);
+            TimeSpan itemDuration = DurationForMediaItem(mediaItem, nextState);
+            List<MediaChapter> itemChapters = HasMediaSegmentRanges(playbackRanges, mediaDuration)
+                ? []
+                : ChaptersForMediaItem(mediaItem);
 
             if (itemDuration > scheduleItem.PlayoutDuration)
             {
@@ -208,6 +213,7 @@ public class PlayoutModeSchedulerDuration(ILogger logger)
                     itemChapters,
                     warnings,
                     cancellationToken);
+                maybePlayoutItems = ApplyMediaSegmentRanges(maybePlayoutItems, playoutItem, playbackRanges, mediaDuration);
 
                 // foreach (PlayoutItem pi in maybePlayoutItems.OrderBy(pi => pi.StartOffset))
                 // {

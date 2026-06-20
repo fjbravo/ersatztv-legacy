@@ -5,6 +5,7 @@ using ErsatzTV.Core.Domain.Scheduling;
 using ErsatzTV.Core.Extensions;
 using ErsatzTV.Core.Interfaces.Repositories;
 using ErsatzTV.Core.Interfaces.Scheduling;
+using ErsatzTV.Core.MediaSegments;
 using ErsatzTV.Core.Scheduling.BlockScheduling;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
@@ -729,7 +730,10 @@ public class SchedulingEngine(
 
             foreach (MediaItem mediaItem in enumeratorDetails.Enumerator.Current)
             {
-                TimeSpan itemDuration = mediaItem.GetDurationForPlayout();
+                IReadOnlyList<PlaybackRange> playbackRanges = MediaSegmentPlayoutPlanner.GetPlaybackRanges(
+                    mediaItem,
+                    _referenceData.MediaSegmentPlaybackRanges);
+                TimeSpan itemDuration = TimeSpan.FromTicks(playbackRanges.Sum(r => r.Duration.Ticks));
 
                 var playoutItem = new PlayoutItem
                 {
@@ -779,11 +783,12 @@ public class SchedulingEngine(
 
                 if (remainingToFill - itemDuration >= TimeSpan.Zero || !stopBeforeEnd)
                 {
-                    _state.AddedItems.Add(playoutItem);
+                    List<PlayoutItem> playoutItems = MediaSegmentPlayoutPlanner.ApplyRanges(playoutItem, playbackRanges);
+                    _state.AddedItems.AddRange(playoutItems);
                     _state.AdvanceGuideGroup();
 
                     // create history record
-                    List<PlayoutHistory> maybeHistory = GetHistoryForItem(enumeratorDetails, playoutItem, mediaItem);
+                    List<PlayoutHistory> maybeHistory = GetHistoryForItem(enumeratorDetails, playoutItems[^1], mediaItem);
                     foreach (PlayoutHistory history in maybeHistory)
                     {
                         _state.AddedHistory.Add(history);
@@ -792,7 +797,7 @@ public class SchedulingEngine(
                     remainingToFill -= itemDuration;
                     _state.CurrentTime += itemDuration;
 
-                    enumeratorDetails.Enumerator.MoveNext(playoutItem.StartOffset);
+                    enumeratorDetails.Enumerator.MoveNext(playoutItems[0].StartOffset);
                 }
                 else if (discardAttempts > 0)
                 {
@@ -806,11 +811,15 @@ public class SchedulingEngine(
                     playoutItem.Finish = targetTime.UtcDateTime;
                     playoutItem.OutPoint = playoutItem.Finish - playoutItem.Start;
 
-                    _state.AddedItems.Add(playoutItem);
+                    IReadOnlyList<PlaybackRange> trimmedRanges = MediaSegmentPlayoutPlanner.TruncateRanges(
+                        playbackRanges,
+                        remainingToFill);
+                    List<PlayoutItem> playoutItems = MediaSegmentPlayoutPlanner.ApplyRanges(playoutItem, trimmedRanges);
+                    _state.AddedItems.AddRange(playoutItems);
                     _state.AdvanceGuideGroup();
 
                     // create history record
-                    List<PlayoutHistory> maybeHistory = GetHistoryForItem(enumeratorDetails, playoutItem, mediaItem);
+                    List<PlayoutHistory> maybeHistory = GetHistoryForItem(enumeratorDetails, playoutItems[^1], mediaItem);
                     foreach (PlayoutHistory history in maybeHistory)
                     {
                         _state.AddedHistory.Add(history);
@@ -819,7 +828,7 @@ public class SchedulingEngine(
                     remainingToFill = TimeSpan.Zero;
                     _state.CurrentTime = targetTime;
 
-                    enumeratorDetails.Enumerator.MoveNext(playoutItem.StartOffset);
+                    enumeratorDetails.Enumerator.MoveNext(playoutItems[0].StartOffset);
                 }
                 else if (maybeFallbackEnumeratorDetails.IsSome)
                 {

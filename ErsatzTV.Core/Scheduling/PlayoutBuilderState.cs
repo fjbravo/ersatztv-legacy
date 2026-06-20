@@ -1,4 +1,5 @@
 ﻿using ErsatzTV.Core.Interfaces.Scheduling;
+using ErsatzTV.Core.MediaSegments;
 
 namespace ErsatzTV.Core.Scheduling;
 
@@ -10,8 +11,12 @@ public record PlayoutBuilderState(
     bool InFlood,
     bool InDurationFiller,
     int NextGuideGroup,
-    DateTimeOffset CurrentTime)
+    DateTimeOffset CurrentTime,
+    IReadOnlyDictionary<int, IReadOnlyList<PlaybackRange>> MediaSegmentPlaybackRanges = null)
 {
+    public IReadOnlyDictionary<int, IReadOnlyList<PlaybackRange>> MediaSegmentPlaybackRanges { get; } =
+        MediaSegmentPlaybackRanges ?? new Dictionary<int, IReadOnlyList<PlaybackRange>>();
+
     public int IncrementGuideGroup => (NextGuideGroup + 1) % 10000;
     public int DecrementGuideGroup => (NextGuideGroup - 1) % 10000;
 }

@@ -2,6 +2,7 @@
 using ErsatzTV.Core.Domain.Filler;
 using ErsatzTV.Core.Extensions;
 using ErsatzTV.Core.Interfaces.Scheduling;
+using ErsatzTV.Core.MediaSegments;
 using LanguageExt.UnsafeValueAccess;
 using Microsoft.Extensions.Logging;
 
@@ -44,7 +45,9 @@ public class PlayoutModeSchedulerFlood(ILogger logger) : PlayoutModeSchedulerBas
                 break;
             }
 
-            TimeSpan itemDuration = mediaItem.GetDurationForPlayout();
+            TimeSpan mediaDuration = mediaItem.GetDurationForPlayout();
+            IReadOnlyList<PlaybackRange> playbackRanges = PlaybackRangesForMediaItem(mediaItem, nextState);
+            TimeSpan itemDuration = DurationForMediaItem(mediaItem, nextState);
 
             // never block scheduling when there is only one schedule item (with fixed start and flood)
             DateTimeOffset peekScheduleItemStart =
@@ -59,7 +62,9 @@ public class PlayoutModeSchedulerFlood(ILogger logger) : PlayoutModeSchedulerBas
                     : hardStop - itemStartTime;
             }
 
-            List<MediaChapter> itemChapters = ChaptersForMediaItem(mediaItem);
+            List<MediaChapter> itemChapters = HasMediaSegmentRanges(playbackRanges, mediaDuration)
+                ? []
+                : ChaptersForMediaItem(mediaItem);
 
             var playoutItem = new PlayoutItem
             {
@@ -120,6 +125,7 @@ public class PlayoutModeSchedulerFlood(ILogger logger) : PlayoutModeSchedulerBas
                 itemChapters,
                 warnings,
                 cancellationToken);
+            maybePlayoutItems = ApplyMediaSegmentRanges(maybePlayoutItems, playoutItem, playbackRanges, mediaDuration);
 
             DateTimeOffset itemEndTimeWithFiller = maybePlayoutItems.Max(pi => pi.FinishOffset);
 

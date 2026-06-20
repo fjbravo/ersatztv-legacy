@@ -1,5 +1,6 @@
 ﻿using ErsatzTV.Core.Domain;
 using ErsatzTV.Core.Domain.Filler;
+using ErsatzTV.Core.MediaSegments;
 using ErsatzTV.Core.Scheduling;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -20,6 +21,89 @@ public class PlayoutModeSchedulerOneTests : SchedulerTestBase
 
     private CancellationToken _cancellationToken;
     private Random _random;
+
+    [Test]
+    public void Should_Split_MediaSegment_Playback_Ranges_And_Advance_By_Effective_Duration()
+    {
+        Collection collectionOne = TwoItemCollection(1, 2, TimeSpan.FromHours(1));
+
+        var scheduleItem = new ProgramScheduleItemOne
+        {
+            Id = 1,
+            Index = 1,
+            Collection = collectionOne,
+            CollectionId = collectionOne.Id,
+            StartTime = null,
+            PlaybackOrder = PlaybackOrder.Chronological,
+            CustomTitle = "CustomTitle"
+        };
+
+        var scheduleItemsEnumerator = new OrderedScheduleItemsEnumerator(
+            new List<ProgramScheduleItem> { scheduleItem },
+            new CollectionEnumeratorState());
+
+        var enumerator = new ChronologicalMediaCollectionEnumerator(
+            collectionOne.MediaItems,
+            new CollectionEnumeratorState());
+
+        PlayoutBuilderState baseState = StartState(scheduleItemsEnumerator);
+        var startState = new PlayoutBuilderState(
+            baseState.PlayoutId,
+            baseState.ScheduleItemsEnumerator,
+            baseState.MultipleRemaining,
+            baseState.DurationFinish,
+            baseState.InFlood,
+            baseState.InDurationFiller,
+            baseState.NextGuideGroup,
+            baseState.CurrentTime,
+            new Dictionary<int, IReadOnlyList<PlaybackRange>>
+            {
+                {
+                    1,
+                    [
+                        new PlaybackRange(TimeSpan.Zero, TimeSpan.FromMinutes(10)),
+                        new PlaybackRange(TimeSpan.FromMinutes(20), TimeSpan.FromHours(1))
+                    ]
+                }
+            });
+
+        var scheduler = new PlayoutModeSchedulerOne(Substitute.For<ILogger>());
+        (PlayoutBuilderState playoutBuilderState, List<PlayoutItem> playoutItems, PlayoutBuildWarnings _) = scheduler.Schedule(
+            startState,
+            CollectionEnumerators(scheduleItem, enumerator),
+            scheduleItem,
+            NextScheduleItem,
+            HardStop(scheduleItemsEnumerator),
+            _random,
+            _cancellationToken);
+
+        playoutBuilderState.CurrentTime.ShouldBe(startState.CurrentTime.AddMinutes(50));
+        playoutItems.Last().FinishOffset.ShouldBe(playoutBuilderState.CurrentTime);
+
+        playoutBuilderState.NextGuideGroup.ShouldBe(2);
+        playoutBuilderState.ScheduleItemsEnumerator.State.Index.ShouldBe(0);
+        enumerator.State.Index.ShouldBe(1);
+
+        playoutItems.Count.ShouldBe(2);
+
+        playoutItems[0].MediaItemId.ShouldBe(1);
+        playoutItems[0].StartOffset.ShouldBe(startState.CurrentTime);
+        playoutItems[0].FinishOffset.ShouldBe(startState.CurrentTime.AddMinutes(10));
+        playoutItems[0].InPoint.ShouldBe(TimeSpan.Zero);
+        playoutItems[0].OutPoint.ShouldBe(TimeSpan.FromMinutes(10));
+        playoutItems[0].GuideGroup.ShouldBe(1);
+        playoutItems[0].FillerKind.ShouldBe(FillerKind.None);
+        playoutItems[0].CustomTitle.ShouldBe("CustomTitle");
+
+        playoutItems[1].MediaItemId.ShouldBe(1);
+        playoutItems[1].StartOffset.ShouldBe(startState.CurrentTime.AddMinutes(10));
+        playoutItems[1].FinishOffset.ShouldBe(startState.CurrentTime.AddMinutes(50));
+        playoutItems[1].InPoint.ShouldBe(TimeSpan.FromMinutes(20));
+        playoutItems[1].OutPoint.ShouldBe(TimeSpan.FromHours(1));
+        playoutItems[1].GuideGroup.ShouldBe(1);
+        playoutItems[1].FillerKind.ShouldBe(FillerKind.None);
+        playoutItems[1].CustomTitle.ShouldBe("CustomTitle");
+    }
 
     [Test]
     public void Should_Have_Gap_With_No_Tail_No_Fallback()

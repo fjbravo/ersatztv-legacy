@@ -797,7 +797,8 @@ public class PlayoutBuilder : IPlayoutBuilder
             startAnchor.InFlood,
             startAnchor.InDurationFiller,
             startAnchor.NextGuideGroup,
-            currentTime);
+            currentTime,
+            referenceData.MediaSegmentPlaybackRanges);
 
         var schedulerOne = new PlayoutModeSchedulerOne(_logger);
         var schedulerMultiple = new PlayoutModeSchedulerMultiple(collectionItemCount.ToMap(), _logger);
