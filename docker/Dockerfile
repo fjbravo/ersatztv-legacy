@@ -2,7 +2,8 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-amd64 AS dotnet-runtime
 
 FROM --platform=linux/amd64 ghcr.io/ersatztv/ersatztv-ffmpeg:7.1.1 AS runtime-base
 COPY --from=dotnet-runtime /usr/share/dotnet /usr/share/dotnet
-RUN apt-get update && \
+RUN rm -f /etc/apt/sources.list.d/intel*.list /etc/apt/sources.list.d/*gpu*.list && \
+    apt-get update && \
     apt-get install -y --no-install-recommends python3 python3-pip && \
     python3 -m pip install --target=/app/pythonlibs --no-cache-dir streamlink && \
     apt-get clean -y && \
