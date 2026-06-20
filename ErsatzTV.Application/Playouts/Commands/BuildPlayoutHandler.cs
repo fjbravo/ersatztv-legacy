@@ -633,7 +633,51 @@ public class BuildPlayoutHandler : IRequestHandler<BuildPlayout, Either<BaseErro
             return new Dictionary<int, IReadOnlyList<PlaybackRange>>();
         }
 
+        List<MediaItemMediaSegmentCacheEntry> directPolicySegments = configuration.ItemSegments
+            .Where(s => s.ShowId.HasValue && enabledPolicies.ContainsKey(s.ShowId.Value))
+            .ToList();
+
+        var result = new Dictionary<int, IReadOnlyList<PlaybackRange>>();
+        if (directPolicySegments.Count > 0)
+        {
+            List<int> directPolicyMediaItemIds = directPolicySegments
+                .Select(s => s.MediaItemId)
+                .Distinct()
+                .ToList();
+
+            List<OtherVideo> mediaItems = await dbContext.OtherVideos
+                .AsNoTracking()
+                .Where(ov => directPolicyMediaItemIds.Contains(ov.Id))
+                .Include(mi => mi.MediaVersions)
+                .ToListAsync();
+
+            foreach (OtherVideo mediaItem in mediaItems)
+            {
+                int? policyShowId = directPolicySegments
+                    .Where(s => s.MediaItemId == mediaItem.Id)
+                    .Select(s => s.ShowId)
+                    .FirstOrDefault();
+                if (!policyShowId.HasValue || !enabledPolicies.TryGetValue(policyShowId.Value, out ShowMediaSegmentSkipPolicy policy))
+                {
+                    continue;
+                }
+
+                List<MediaSegment> segments = directPolicySegments
+                    .Where(s => s.MediaItemId == mediaItem.Id)
+                    .Select(s => s.ToMediaSegment())
+                    .ToList();
+
+                IReadOnlyList<PlaybackRange> ranges = MediaSegmentRangePlanner.PlanRanges(
+                    mediaItem.GetDurationForPlayout(),
+                    segments,
+                    policy.ToSkipPolicy());
+
+                result[mediaItem.Id] = ranges;
+            }
+        }
+
         List<int> mediaItemIds = configuration.ItemSegments
+            .Where(s => !s.ShowId.HasValue)
             .Select(s => s.MediaItemId)
             .Distinct()
             .ToList();
@@ -645,7 +689,6 @@ public class BuildPlayoutHandler : IRequestHandler<BuildPlayout, Either<BaseErro
             .Include(e => e.Season)
             .ToListAsync();
 
-        var result = new Dictionary<int, IReadOnlyList<PlaybackRange>>();
         foreach (Episode episode in episodes)
         {
             if (episode.Season is null || !enabledPolicies.TryGetValue(episode.Season.ShowId, out ShowMediaSegmentSkipPolicy policy))

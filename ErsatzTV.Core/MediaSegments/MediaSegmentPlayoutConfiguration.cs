@@ -49,6 +49,7 @@ public class ShowMediaSegmentSkipPolicy
 public class MediaItemMediaSegmentCacheEntry
 {
     public int MediaItemId { get; set; }
+    public int? ShowId { get; set; }
     public string JellyfinItemId { get; set; }
     public MediaSegmentType Type { get; set; }
     public long StartTicks { get; set; }
